@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تحليل استعلامات رضا العمرة</title>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'IBM Plex Sans Arabic', sans-serif;
+            direction: rtl;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+        }
+        h2 {
+            color: #2980b9;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+        }
+        h3 {
+            color: #e74c3c;
+        }
+        .section {
+            background-color: #fff;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        .section p {
+            line-height: 1.6;
+            color: #34495e;
+        }
+        #network {
+            width: 100%;
+            height: 500px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .highlight {
+            background-color: #ecf0f1;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        ul {
+            padding-right: 20px;
+        }
+    </style>
+    <script src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
+</head>
+<body>
+    <h1>تحليل استعلامات رضا العمرة والمواقيت</h1>
+
+    <div class="section">
+        <h2>رسم بياني للعلاقات بين الجداول</h2>
+        <div id="network"></div>
+    </div>
+
+    <div class="section">
+        <h2>نظرة عامة على الكويريز</h2>
+        <p>الكويريز مقسمة إلى عدة مجموعات:</p>
+        <ul>
+            <li><strong>استبيانات رضا العمرة:</strong> (`public Umrah Satisfaction Survey`, `demographcis`, `satisfication_unpivot`, `satisfication_classification`).</li>
+            <li><strong>جودة خدمات شركات العمرة:</strong> (`public Quality of Umrah Companies Services`, `quality_visits`, `quality_unpivot`).</li>
+            <li><strong>بيانات المواقيت:</strong> (`public Mawaqit Satisfaction Survey`, `mawaqit_demographics`, `mawaqit_s_unpivot`, `public Quality Check Mawaqit`, `mawaqit_visits`, `mawaqit_q_unpivot`).</li>
+            <li><strong>بيانات إضافية:</strong> (مثل الدول، الشركات، التقويم الهجري، الخدمات المتطرفة، إحصائيات الطواف).</li>
+            <li><strong>استعلامات مساعدة:</strong> (مثل `excluded_users`, `temp_benchmark_fields`, `calendar`).</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>1. `public Umrah Satisfaction Survey`</h2>
+        <h3>الوصف</h3>
+        <p>هذا الاستعلام هو نقطة البداية لتحليل استبيانات رضا العمرة. يجلب البيانات الخام من قاعدة بيانات PostgreSQL ويجري عليها بعض المعالجات الأولية.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يتصل بقاعدة بيانات PostgreSQL (عنوان الخادم: `10.105.144.7`)، قاعدة `haj45`، ويختار جدول `Umrah Satisfaction Survey`.<br>
+            2. تصفية البيانات التجريبية: يزيل الصفوف التي تحتوي على `demo = true` لضمان استخدام البيانات الحقيقية فقط.<br>
+            3. دمج الأعمدة: يدمج عمودين (`MRH68` و`MRH74`) في عمود واحد (`MRH74`) بعد تحويله إلى نوع نصي.<br>
+            4. تغيير نوع العمود: يحول نوع `MRH74` إلى عدد صحيح (`Int64.Type`)، ثم يستبدل أي أخطاء بقيمة `null`.<br>
+            5. إضافة عمود `wrong_input`: يحدد المدخلات الخاطئة بناءً على شروط معينة.<br>
+            6. إضافة عمود `umrah_type`: يصنف نوع العمرة بناءً على `DDU01` و`DDU10`.<br>
+            7. دمج الأعمدة مرة أخرى: يدمج `MRH53` و`MRH53_r` في عمود واحد (`MRH53`).
+        </p>
+        <h3>الغرض</h3>
+        <p>إعداد البيانات الخام للتحليل من خلال تنظيفها وتصنيفها. هذا الاستعلام يُغذي `demographcis` و`satisfication_unpivot`.</p>
+    </div>
+
+    <div class="section">
+        <h2>2. `demographcis`</h2>
+        <h3>الوصف</h3>
+        <p>يركز على معالجة البيانات الديموغرافية (مثل العمر، الجنس، الجنسية) مع استبعاد المستخدمين غير المرغوب فيهم.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `public Umrah Satisfaction Survey`.<br>
+            2. إزالة الأعمدة غير الضرورية: يزيل الأعمدة المحددة في `temp_benchmark_fields[field]`.<br>
+            3. إضافة عمود `Date`: يستخرج التاريخ من `survey_start_time` ويحوله إلى نوع تاريخ.<br>
+            4. إضافة عمود `user_date`: يدمج `user_id` و`Date` في عمود جديد (`user_date`) بصيغة نصية.<br>
+            5. دمج مع `excluded_users`: يربط البيانات مع `excluded_users` باستخدام `user_date` لتحديد المستخدمين المستبعدين.<br>
+            6. توسيع الأعمدة: يوسع الأعمدة من `excluded_users` لإضافة `scenario` و`user_period`.<br>
+            7. إضافة عمود `exclude users`: يحدد المستخدمين الذين يجب استبعادهم بناءً على شروط زمنية ومعرفات.
+        </p>
+        <h3>الغرض</h3>
+        <p>توفير بيانات ديموغرافية نظيفة ومصفاة للتحليل، مع استبعاد المستخدمين غير المطلوبين (مثل المستخدمين التجريبيين).</p>
+    </div>
+
+    <div class="section">
+        <h2>3. `satisfication_unpivot`</h2>
+        <h3>الوصف</h3>
+        <p>يحول بيانات الرضا من شكل أعمدة متعددة إلى صفوف (Unpivot) لتسهيل التحليل.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `public Umrah Satisfaction Survey`.<br>
+            2. اختيار الأعمدة: يختار الأعمدة الأساسية (`id`, `DDU13`, `demo`, `wrong_input`) بالإضافة إلى الأعمدة المحددة في `temp_benchmark_fields[field]`.<br>
+            3. تحويل الأعمدة إلى صفوف (Unpivot): يحول الأعمدة الأخرى إلى صفوف بحيث يصبح لدينا عمودين جديدين: `field` و`Value`.<br>
+            4. دمج مع `temp_benchmark_fields`: يربط البيانات مع `temp_benchmark_fields` باستخدام `field` لإضافة `response_type` و`city`.<br>
+            5. إضافة عمود `in_range`: يتحقق إذا كانت القيم ضمن النطاق المسموح.<br>
+            6. إضافة عمود `mark`: يحسب درجة الرضا بناءً على `response_type`.<br>
+            7. إضافة عمود `Location`: يحدد الموقع بناءً على `city` و`DDU13` (مثل مكة أو المدينة المنورة).<br>
+            8. إزالة الأعمدة غير الضرورية: يزيل `DDU13` و`city`.
+        </p>
+        <h3>الغرض</h3>
+        <p>تحويل بيانات الرضا إلى صيغة مناسبة للتصنيف والتحليل، مع إضافة درجات ومواقع.</p>
+    </div>
+
+    <div class="section">
+        <h2>4. `satisfication_classification`</h2>
+        <h3>الوصف</h3>
+        <p>يصنف بيانات الرضا بناءً على معايير محددة.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `satisfication_unpivot`.<br>
+            2. تجميع البيانات: يجمع البيانات حسب `id`، ويحسب: `min_value`, `max_value`, `demo`, `in_range`, `wrong_input`.<br>
+            3. إضافة عمود `Business Logic`: يحدد إذا كانت البيانات منطقية.<br>
+            4. إضافة عمود `total_logic_filter`: يجمع الشروط المنطقية: `not demo` و`in_range` و`Business Logic` و`not wrong_input`.
+        </p>
+        <h3>الغرض</h3>
+        <p>تصنيف بيانات الرضا لإنتاج تقارير نهائية أو تحليلات.</p>
+    </div>
+
+    <div class="section">
+        <h2>5. `excluded_users`</h2>
+        <h3>الوصف</h3>
+        <p>يحدد المستخدمين الذين يجب استبعادهم من التحليل.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: بيانات JSON تحتوي على `user_id`, `start_date`, `end_date`, `scenario`.<br>
+            2. تغيير نوع الأعمدة: يحول الأعمدة إلى أنواع مناسبة (`text` لـ `user_id`، `date` للتواريخ، `Int64` لـ `scenario`).<br>
+            3. إضافة عمود `list_dates`: يولد قائمة تواريخ بين `start_date` و`end_date`.<br>
+            4. إضافة عمود `user_period`: يدمج `user_id`, `start_date`, `end_date`, `scenario` في عمود نصي.<br>
+            5. إزالة الأعمدة: يزيل `start_date` و`end_date`.<br>
+            6. توسيع قائمة التواريخ: يوسع `list_dates` إلى صفوف.<br>
+            7. إضافة عمود `user_date`: يدمج `user_id` و`list_dates`.<br>
+            8. إزالة التكرارات: يحتفظ بالصفوف الفريدة بناءً على `user_date`.
+        </p>
+        <h3>الغرض</h3>
+        <p>دعم `demographcis` بتحديد المستخدمين المستبعدين بناءً على فترات زمنية ومعرفات.</p>
+    </div>
+
+    <div class="section">
+        <h2>6. `public Quality of Umrah Companies Services`</h2>
+        <h3>الوصف</h3>
+        <p>يجلب بيانات جودة خدمات شركات العمرة.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: جدول `Quality of Umrah Companies Services` من قاعدة `haj45`.<br>
+            2. دمج البيانات: يدمج مع `public q-Enrichment location`.<br>
+            3. تصفية البيانات التجريبية: يزيل الصفوف التي تحتوي على `demo = true`.
+        </p>
+        <h3>الغرض</h3>
+        <p>إعداد بيانات جودة الخدمات للتحليل.</p>
+    </div>
+
+    <div class="section">
+        <h2>7. `quality_visits`</h2>
+        <h3>الوصف</h3>
+        <p>يستخرج بيانات الزيارات من بيانات جودة الخدمات.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `public Quality of Umrah Companies Services`.<br>
+            2. إزالة الأعمدة: يزيل الأعمدة المحددة في `temp_benchmark_fields[field]`.<br>
+            3. إضافة عمود `Date`: يستخرج التاريخ من `survey_start_time`.
+        </p>
+        <h3>الغرض</h3>
+        <p>تحديد تواريخ الزيارات لتحليل جودة الخدمات.</p>
+    </div>
+
+    <div class="section">
+        <h2>8. `quality_unpivot`</h2>
+        <h3>الوصف</h3>
+        <p>يحول بيانات الجودة إلى صفوف لتحليلها.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `public Quality of Umrah Companies Services`.<br>
+            2. اختيار الأعمدة: يختار `id` وأعمدة من `temp_benchmark_fields[field]`.<br>
+            3. تغيير نوع الأعمدة: يحول أعمدة مثل `QMR01`, `QMR02`, إلخ إلى نوع نصي.<br>
+            4. تحويل الأعمدة إلى صفوف (Unpivot): يحول الأعمدة إلى `field` و`value`.<br>
+            5. استبدال القيم: يحول القيم النصية إلى أرقام (مثل `"yes"` إلى 5، `"no"` إلى 1).<br>
+            6. إضافة عمود `mark`: يقسم القيمة على 5 للحصول على درجة.<br>
+            7. إضافة عمود `id_field`: يدمج `id` و`field`.<br>
+            8. دمج مع `temp_benchmark_fields`: يضيف `Impact Score`.
+        </p>
+        <h3>الغرض</h3>
+        <p>تحويل بيانات الجودة إلى صيغة مناسبة للتحليل مع إضافة درجات.</p>
+    </div>
+
+    <div class="section">
+        <h2>9. `add_hijri_date_columns`</h2>
+        <h3>الوصف</h3>
+        <p>دالة تضيف أعمدة للتاريخ الهجري.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. الإدخال: جدول واسم عمود تاريخ.<br>
+            2. إضافة عمود `hijri_date`: يحول التاريخ إلى صيغة هجرية.<br>
+            3. تقسيم التاريخ: يقسم `hijri_date` إلى `hijri_day`, `hijri_month`, `hijri_year`.<br>
+            4. إضافة عمود `month_name`: يحدد اسم الشهر الهجري بناءً على `hijri_day` و`hijri_month`.<br>
+            5. إضافة عمود `Day name`: يستخرج اسم اليوم.
+        </p>
+        <h3>الغرض</h3>
+        <p>إضافة التواريخ الهجرية لتحليل زمني دقيق.</p>
+    </div>
+
+    <div class="section">
+        <h2>10. `public Mawaqit Satisfaction Survey`</h2>
+        <h3>الوصف</h3>
+        <p>يجلب بيانات استبيانات رضا المواقيت.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: جدول `Mawaqit Satisfaction Survey` من قاعدة `haj45`.<br>
+            2. تصفية البيانات التجريبية: يزيل الصفوف التي تحتوي على `demo = true`.
+        </p>
+        <h3>الغرض</h3>
+        <p>إعداد بيانات رضا المواقيت.</p>
+    </div>
+
+    <div class="section">
+        <h2>11. `mawaqit_demographics`</h2>
+        <h3>الوصف</h3>
+        <p>يستخرج البيانات الديموغرافية لبيانات المواقيت.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `public Mawaqit Satisfaction Survey`.<br>
+            2. إزالة الأعمدة: يزيل الأعمدة المحددة في `temp_benchmark_fields[field]`.
+        </p>
+        <h3>الغرض</h3>
+        <p>توفير بيانات ديموغرافية نظيفة لتحليل المواقيت.</p>
+    </div>
+
+    <div class="section">
+        <h2>12. `mawaqit_s_unpivot`</h2>
+        <h3>الوصف</h3>
+        <p>يحول بيانات رضا المواقيت إلى صفوف.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `public Mawaqit Satisfaction Survey`.<br>
+            2. اختيار الأعمدة: يختار `id` وأعمدة من `temp_benchmark_fields[field]`.<br>
+            3. تحويل الأعمدة إلى صفوف (Unpivot): يحول الأعمدة إلى `field` و`Value`.<br>
+            4. دمج مع `temp_benchmark_fields`: يضيف `response_type`.<br>
+            5. إضافة عمود `mark`: يحسب درجة الرضا بنفس طريقة `satisfication_unpivot`.
+        </p>
+        <h3>الغرض</h3>
+        <p>تحويل بيانات رضا المواقيت إلى صيغة مناسبة للتحليل.</p>
+    </div>
+
+    <div class="section">
+        <h2>13. `public Quality Check Mawaqit`</h2>
+        <h3>الوصف</h3>
+        <p>يجلب بيانات فحص جودة المواقيت.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: جدول `Quality Check Mawaqit` من قاعدة `haj45`.<br>
+            2. تصفية البيانات التجريبية: يزيل الصفوف التي تحتوي على `demo = true`.
+        </p>
+        <h3>الغرض</h3>
+        <p>إعداد بيانات جودة المواقيت.</p>
+    </div>
+
+    <div class="section">
+        <h2>14. `mawaqit_visits`</h2>
+        <h3>الوصف</h3>
+        <p>يستخرج بيانات الزيارات من بيانات جودة المواقيت.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `public Quality Check Mawaqit`.<br>
+            2. إزالة الأعمدة: يزيل الأعمدة المحددة في `temp_benchmark_fields[field]`.
+        </p>
+        <h3>الغرض</h3>
+        <p>تحديد زيارات المواقيت.</p>
+    </div>
+
+    <div class="section">
+        <h2>15. `mawaqit_q_unpivot`</h2>
+        <h3>الوصف</h3>
+        <p>يحول بيانات جودة المواقيت إلى صفوف.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `public Quality Check Mawaqit`.<br>
+            2. اختيار الأعمدة: يختار `id` وأعمدة من `temp_benchmark_fields[field]`.<br>
+            3. تحويل الأعمدة إلى صفوف (Unpivot): يحول الأعمدة إلى `field` و`value`.<br>
+            4. تغيير نوع العمود: يحول `value` إلى `Int64`.<br>
+            5. إضافة عمود `mark`: يقسم القيمة على 5.<br>
+            6. إضافة عمود `id_field`: يدمج `id` و`field`.<br>
+            7. دمج مع `temp_benchmark_fields`: يضيف `Impact Score`.
+        </p>
+        <h3>الغرض</h3>
+        <p>تحويل بيانات جودة المواقيت إلى صيغة مناسبة للتحليل.</p>
+    </div>
+
+    <div class="section">
+        <h2>16. `temp_benchmark_fields`</h2>
+        <h3>الوصف</h3>
+        <p>يوفر بيانات معايير إضافية لتحسين التحليل.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: بيانات JSON تحتوي على حقول مثل `field`, `response type`, `city`, `Impact Score`.<br>
+            2. تصفية البيانات: يختار الصفوف التي تحتوي على `response type` من الأنواع: `CES`, `CSAT`, `NPS`, `Quality`.<br>
+            3. استبدال القيم: يحول القيم الفارغة في `city` إلى `null`.<br>
+            4. تغيير نوع العمود: يحول `Impact Score` إلى `Int64`.
+        </p>
+        <h3>الغرض</h3>
+        <p>دعم الاستعلامات مثل `satisfication_unpivot`, `quality_unpivot`, `mawaqit_s_unpivot` ببيانات إضافية.</p>
+    </div>
+
+    <div class="section">
+        <h2>17. `calendar`</h2>
+        <h3>الوصف</h3>
+        <p>يوفر تقويمًا بالتواريخ الهجرية.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: بيانات JSON تحتوي على عمود `date`.<br>
+            2. تغيير نوع العمود: يحول `date` إلى نوع تاريخ.<br>
+            3. استخدام الدالة `add_hijri_date_columns`: تضيف أعمدة التاريخ الهجري.
+        </p>
+        <h3>الغرض</h3>
+        <p>توفير تقويم هجري لتحليل زمني.</p>
+    </div>
+
+    <div class="section">
+        <h2>18. `months`</h2>
+        <h3>الوصف</h3>
+        <p>يستخرج أسماء الأشهر الهجرية ويرتبها.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `calendar`.<br>
+            2. اختيار الأعمدة: يختار `month_name`.<br>
+            3. إزالة التكرارات: يحتفظ بالأشهر الفريدة.<br>
+            4. تصفية القيم الفارغة: يزيل الصفوف التي تحتوي على `month_name` فارغ.<br>
+            5. إضافة فهرس: يضيف عمود `Index`.<br>
+            6. إضافة عمود `next_month`: يحدد الشهر التالي.<br>
+            7. إضافة عمود `month_order`: يدمج `Index` و`month_name`.<br>
+            8. إضافة عمود `quarters`: يحدد الربع السنوي (q1, q2, q3, q4).
+        </p>
+        <h3>الغرض</h3>
+        <p>ترتيب الأشهر الهجرية لتحليل زمني.</p>
+    </div>
+
+    <div class="section">
+        <h2>19. `extreme_survices`</h2>
+        <h3>الوصف</h3>
+        <p>يحدد الخدمات المتطرفة (الأفضل والأسوأ) من استبيانات العمرة.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: يأخذ البيانات من `public Umrah Satisfaction Survey`.<br>
+            2. اختيار الأعمدة: يختار `id`, `MRH55` (أفضل الخدمات), `MRH56` (أسوأ الخدمات).<br>
+            3. تحويل الأعمدة إلى صفوف (Unpivot): يحول `MRH55` و`MRH56` إلى `field` و`extreme_survice`.<br>
+            4. استخراج النصوص: يستخرج النصوص من `extreme_survice` ويزيل علامات الاقتباس.<br>
+            5. تقسيم القيم: يقسم القيم إلى قائمة.<br>
+            6. دمج مع بيانات عربية: يربط مع بيانات تحتوي على أسماء الخدمات بالعربية.<br>
+            7. إضافة عمود `filter_best_worst_survices`: يحدد إذا كانت الخدمة "أفضل" (`MRH55`) أو "أسوأ" (`MRH56`).<br>
+            8. إضافة عمود `id_field`: يدمج `id` و`field`.
+        </p>
+        <h3>الغرض</h3>
+        <p>تحديد الخدمات الأفضل والأسوأ لتحليل رضا العملاء.</p>
+    </div>
+
+    <div class="section">
+        <h2>20. `public Statistics of Pilgrims Performing Tawaf`</h2>
+        <h3>الوصف</h3>
+        <p>يجلب إحصائيات الحجاج الذين يؤدون الطواف.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: جدول `Statistics of Pilgrims Performing Tawaf` من قاعدة `haj45`.
+        </p>
+        <h3>الغرض</h3>
+        <p>توفير بيانات إحصائية عن الطواف.</p>
+    </div>
+
+    <div class="section">
+        <h2>21. `public country`</h2>
+        <h3>الوصف</h3>
+        <p>يجلب بيانات الدول مع تصنيفاتها وأعلامها.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: جدول `country` من قاعدة `haj45`.<br>
+            2. دمج مع `countries_classification`: يضيف `Regional Distribution`.<br>
+            3. دمج مع `countries_flags`: يضيف `flag_link`.<br>
+            4. إزالة التكرارات: يحتفظ بالصفوف الفريدة بناءً على `id`.
+        </p>
+        <h3>الغرض</h3>
+        <p>توفير بيانات الدول مع تفاصيل إضافية.</p>
+    </div>
+
+    <div class="section">
+        <h2>22. `public umrah company`</h2>
+        <h3>الوصف</h3>
+        <p>يجلب بيانات شركات العمرة.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: جدول `umrah company` من قاعدة `haj45`.<br>
+            2. دمج مع `quarter1_co`: يربط مع بيانات الربع الأول.<br>
+            3. إضافة عمود `q1_company`: يحدد إذا كانت الشركة موجودة في الربع الأول.<br>
+            4. إزالة التكرارات: يحتفظ بالصفوف الفريدة بناءً على `id`.
+        </p>
+        <h3>الغرض</h3>
+        <p>توفير بيانات شركات العمرة مع تصنيف الربع الأول.</p>
+    </div>
+
+    <div class="section">
+        <h2>23. `public users`</h2>
+        <h3>الوصف</h3>
+        <p>يجلب بيانات المستخدمين.</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: جدول `users` من قاعدة `haj45`.<br>
+            2. إزالة التكرارات: يحتفظ بالصفوف الفريدة بناءً على `userid`.<br>
+            3. تصفية القيم الفارغة: يزيل الصفوف التي تحتوي على `userid` فارغ.
+        </p>
+        <h3>الغرض</h3>
+        <p>توفير بيانات المستخدمين النظيفة.</p>
+    </div>
+
+    <div class="section">
+        <h2>24. `visa`, `age`, `education`, `income`</h2>
+        <h3>الوصف</h3>
+        <p>هذه استعلامات مشابهة تستخرج بيانات تصنيفات (تأشيرات، أعمار، مستويات تعليم، دخل).</p>
+        <h3>الخطوات</h3>
+        <p class="highlight">
+            1. المصدر: بيانات JSON.<br>
+            2. استخراج النصوص: يستخرج النصوص بين `{` و`}`.<br>
+            3. تقسيم القيم: يقسم القيم إلى أزواج (رمز واسم).
+        </p>
+        <h3>الغرض</h3>
+        <p>توفير تصنيفات للتحليل الديموغرافي.</p>
+    </div>
+
+    <div class="section">
+        <h2>الخلاصة</h2>
+        <p>
+            - <strong>الاستعلامات الرئيسية</strong> (`public Umrah Satisfaction Survey`, `demographcis`, `satisfication_unpivot`, `satisfication_classification`) تعالج بيانات رضا العمرة من تنظيف إلى تصنيف.<br>
+            - <strong>استعلامات الجودة</strong> (`public Quality of Umrah Companies Services`, `quality_visits`, `quality_unpivot`) تركز على تحليل جودة الخدمات.<br>
+            - <strong>استعلامات المواقيت</strong> (`public Mawaqit Satisfaction Survey`, `mawaqit_demographics`, `mawaqit_s_unpivot`, إلخ) تعالج بيانات المواقيت.<br>
+            - <strong>الاستعلامات المساعدة</strong> (مثل `excluded_users`, `temp_benchmark_fields`, `calendar`) تدعم العملية ببيانات إضافية.<br>
+            كل استعلام له دور محدد، ويعتمد على الاستعلامات الأخرى لضمان تدفق منطقي ودقيق للبيانات.
+        </p>
+    </div>
+
+    <script>
+        var nodes = [
+            { id: 1, label: "public Umrah Satisfaction Survey", group: "Umrah" },
+            { id: 2, label: "demographcis", group: "Umrah" },
+            { id: 3, label: "satisfication_unpivot", group: "Umrah" },
+            { id: 4, label: "satisfication_classification", group: "Umrah" },
+            { id: 5, label: "excluded_users", group: "Helper" },
+            { id: 6, label: "public Quality of Umrah Companies Services", group: "Quality" },
+            { id: 7, label: "quality_visits", group: "Quality" },
+            { id: 8, label: "quality_unpivot", group: "Quality" },
+            { id: 9, label: "temp_benchmark_fields", group: "Helper" },
+            { id: 10, label: "public Mawaqit Satisfaction Survey", group: "Mawaqit" },
+            { id: 11, label: "mawaqit_demographics", group: "Mawaqit" },
+            { id: 12, label: "mawaqit_s_unpivot", group: "Mawaqit" },
+            { id: 13, label: "public Quality Check Mawaqit", group: "Mawaqit" },
+            { id: 14, label: "mawaqit_visits", group: "Mawaqit" },
+            { id: 15, label: "mawaqit_q_unpivot", group: "Mawaqit" },
+            { id: 16, label: "calendar", group: "Helper" },
+            { id: 17, label: "months", group: "Helper" },
+            { id: 18, label: "extreme_survices", group: "Additional" },
+            { id: 19, label: "public Statistics of Pilgrims Performing Tawaf", group: "Additional" },
+            { id: 20, label: "public country", group: "Additional" },
+            { id: 21, label: "public umrah company", group: "Additional" },
+            { id: 22, label: "public users", group: "Additional" },
+            { id: 23, label: "visa, age, education, income", group: "Additional" }
+        ];
+
+        var edges = [
+            { from: 1, to: 2, label: "يغذي" },
+            { from: 1, to: 3, label: "يغذي" },
+            { from: 3, to: 4, label: "يغذي" },
+            { from: 5, to: 2, label: "يستخدم" },
+            { from: 9, to: 3, label: "يستخدم" },
+            { from: 6, to: 7, label: "يغذي" },
+            { from: 6, to: 8, label: "يغذي" },
+            { from: 9, to: 8, label: "يستخدم" },
+            { from: 10, to: 11, label: "يغذي" },
+            { from: 10, to: 12, label: "يغذي" },
+            { from: 9, to: 12, label: "يستخدم" },
+            { from: 13, to: 14, label: "يغذي" },
+            { from: 13, to: 15, label: "يغذي" },
+            { from: 9, to: 15, label: "يستخدم" },
+            { from: 16, to: 17, label: "يغذي" },
+            { from: 1, to: 18, label: "يغذي" }
+        ];
+
+        var container = document.getElementById("network");
+        var data = {
+            nodes: new vis.DataSet(nodes),
+            edges: new vis.DataSet(edges)
+        };
+        var options = {
+            nodes: {
+                shape: "box",
+                font: { size: 16, face: "IBM Plex Sans Arabic" },
+                color: {
+                    background: "#3498db",
+                    border: "#2980b9",
+                    highlight: { background: "#e74c3c", border: "#c0392b" }
+                }
+            },
+            edges: {
+                font: { size: 14, align: "middle", face: "IBM Plex Sans Arabic" },
+                color: { color: "#7f8c8d", highlight: "#e74c3c" },
+                arrows: "to"
+            },
+            groups: {
+                Umrah: { color: { background: "#3498db" } },
+                Quality: { color: { background: "#e67e22" } },
+                Mawaqit: { color: { background: "#2ecc71" } },
+                Helper: { color: { background: "#95a5a6" } },
+                Additional: { color: { background: "#9b59b6" } }
+            },
+            physics: {
+                enabled: false // تعطيل الفيزياء التلقائية لجعل العقد ثابتة
+            },
+            layout: {
+                randomSeed: 1 // لضمان نفس الترتيب الافتراضي في كل مرة
+            },
+            interaction: {
+                dragNodes: true, // السماح بتحريك العقد يدويًا
+                dragView: true, // السماح بتحريك العرض
+                zoomView: true // السماح بالتكبير والتصغير
+            }
+        };
+
+        var network = new vis.Network(container, data, options);
+    </script>
+</body>
+</html>
